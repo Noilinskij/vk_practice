@@ -1,0 +1,10 @@
+# Зависимости
+node_modules/
+
+# База данных SQLite и её временные файлы
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+
+# Логи npm
+npm-debug.log*
