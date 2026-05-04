@@ -4,6 +4,7 @@ const { initDb } = require("./db");
 const authRoutes = require("./routes/auth");
 const quizRoutes = require("./routes/quizzes");
 const sessionRoutes = require("./routes/sessions");
+const profileRoutes = require("./routes/profile");
 
 function createApp() {
   initDb();
@@ -16,6 +17,7 @@ function createApp() {
   app.use("/auth", authRoutes);
   app.use("/quizzes", quizRoutes);
   app.use("/", sessionRoutes);
+  app.use("/profile", profileRoutes);
 
   return app;
 }

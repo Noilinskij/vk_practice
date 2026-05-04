@@ -22,12 +22,35 @@ router.post("/", authRequired, roleRequired("organizer"), (req, res) => {
     return res.status(400).json({ error: "Требуются название и категории" });
   }
 
+  const existingCount = db
+    .prepare("SELECT COUNT(*) AS count FROM quizzes WHERE organizer_id = ? AND deleted_at IS NULL")
+    .get(req.user.id);
+  if (existingCount.count >= 5) {
+    return res.status(400).json({ error: "Организатор может иметь максимум 5 квизов" });
+  }
+
+  const duplicate = db
+    .prepare(
+      "SELECT 1 FROM quizzes WHERE organizer_id = ? AND deleted_at IS NULL AND LOWER(title) = LOWER(?)"
+    )
+    .get(req.user.id, title);
+  if (duplicate) {
+    return res.status(400).json({ error: "Квиз с таким названием уже существует" });
+  }
+
   const quizInfo = db
     .prepare("INSERT INTO quizzes (organizer_id, title, categories) VALUES (?, ?, ?)")
     .run(req.user.id, title, JSON.stringify(categories));
 
   const quizId = quizInfo.lastInsertRowid;
   const normalizedQuestions = normalizeQuestions(questions);
+  if (normalizedQuestions.length > 20) {
+    return res.status(400).json({ error: "В одном квизе может быть максимум 20 вопросов" });
+  }
+  const missingCorrect = normalizedQuestions.some((q) => !Array.isArray(q.correctAnswers) || q.correctAnswers.length === 0);
+  if (missingCorrect) {
+    return res.status(400).json({ error: "В каждом вопросе должен быть хотя бы один правильный ответ" });
+  }
   const insertQuestion = db.prepare(
     "INSERT INTO questions (quiz_id, type, prompt, image_url, options, correct_answers, time_limit, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
   );
@@ -54,7 +77,9 @@ router.post("/", authRequired, roleRequired("organizer"), (req, res) => {
 
 router.get("/", authRequired, roleRequired("organizer"), (req, res) => {
   const quizzes = db
-    .prepare("SELECT id, title, categories, created_at FROM quizzes WHERE organizer_id = ? ORDER BY id DESC")
+    .prepare(
+      "SELECT id, title, categories, created_at FROM quizzes WHERE organizer_id = ? AND deleted_at IS NULL ORDER BY id DESC"
+    )
     .all(req.user.id)
     .map((q) => ({
       ...q,
@@ -66,7 +91,7 @@ router.get("/", authRequired, roleRequired("organizer"), (req, res) => {
 
 router.get("/:id", authRequired, roleRequired("organizer"), (req, res) => {
   const quiz = db
-    .prepare("SELECT * FROM quizzes WHERE id = ? AND organizer_id = ?")
+    .prepare("SELECT * FROM quizzes WHERE id = ? AND organizer_id = ? AND deleted_at IS NULL")
     .get(req.params.id, req.user.id);
   if (!quiz) {
     return res.status(404).json({ error: "Квиз не найден" });
@@ -100,13 +125,21 @@ router.get("/:id", authRequired, roleRequired("organizer"), (req, res) => {
 router.put("/:id", authRequired, roleRequired("organizer"), (req, res) => {
   const { title, categories, questions } = req.body || {};
   const quiz = db
-    .prepare("SELECT id FROM quizzes WHERE id = ? AND organizer_id = ?")
+    .prepare("SELECT id FROM quizzes WHERE id = ? AND organizer_id = ? AND deleted_at IS NULL")
     .get(req.params.id, req.user.id);
   if (!quiz) {
     return res.status(404).json({ error: "Квиз не найден" });
   }
 
   if (title) {
+    const duplicate = db
+      .prepare(
+        "SELECT 1 FROM quizzes WHERE organizer_id = ? AND deleted_at IS NULL AND LOWER(title) = LOWER(?) AND id <> ?"
+      )
+      .get(req.user.id, title, quiz.id);
+    if (duplicate) {
+      return res.status(400).json({ error: "Квиз с таким названием уже существует" });
+    }
     db.prepare("UPDATE quizzes SET title = ? WHERE id = ?").run(title, quiz.id);
   }
   if (Array.isArray(categories)) {
@@ -114,8 +147,17 @@ router.put("/:id", authRequired, roleRequired("organizer"), (req, res) => {
   }
 
   if (Array.isArray(questions)) {
-    db.prepare("DELETE FROM questions WHERE quiz_id = ?").run(quiz.id);
     const normalizedQuestions = normalizeQuestions(questions);
+    if (normalizedQuestions.length > 20) {
+      return res.status(400).json({ error: "В одном квизе может быть максимум 20 вопросов" });
+    }
+    const missingCorrect = normalizedQuestions.some(
+      (q) => !Array.isArray(q.correctAnswers) || q.correctAnswers.length === 0
+    );
+    if (missingCorrect) {
+      return res.status(400).json({ error: "В каждом вопросе должен быть хотя бы один правильный ответ" });
+    }
+    db.prepare("DELETE FROM questions WHERE quiz_id = ?").run(quiz.id);
     const insertQuestion = db.prepare(
       "INSERT INTO questions (quiz_id, type, prompt, image_url, options, correct_answers, time_limit, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
     );
@@ -141,14 +183,13 @@ router.put("/:id", authRequired, roleRequired("organizer"), (req, res) => {
 
 router.delete("/:id", authRequired, roleRequired("organizer"), (req, res) => {
   const quiz = db
-    .prepare("SELECT id FROM quizzes WHERE id = ? AND organizer_id = ?")
+    .prepare("SELECT id FROM quizzes WHERE id = ? AND organizer_id = ? AND deleted_at IS NULL")
     .get(req.params.id, req.user.id);
   if (!quiz) {
     return res.status(404).json({ error: "Квиз не найден" });
   }
 
-  db.prepare("DELETE FROM questions WHERE quiz_id = ?").run(quiz.id);
-  db.prepare("DELETE FROM quizzes WHERE id = ?").run(quiz.id);
+  db.prepare("UPDATE quizzes SET deleted_at = datetime('now') WHERE id = ?").run(quiz.id);
   return res.json({ ok: true });
 });
 

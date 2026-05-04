@@ -326,8 +326,9 @@ button.danger {
   width: 100%;
   border-radius: 16px;
   margin: 12px 0;
-  max-height: 240px;
-  object-fit: cover;
+  max-height: 320px;
+  object-fit: contain;
+  background: var(--bg-soft);
 }
 
 @media (max-width: 900px) {

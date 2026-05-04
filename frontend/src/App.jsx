@@ -33,6 +33,9 @@ export default function App() {
   const [organizerSocket, setOrganizerSocket] = useState(null);
   const [organizerQuestion, setOrganizerQuestion] = useState(null);
   const [participants, setParticipants] = useState([]);
+  const [organizerError, setOrganizerError] = useState("");
+  const [organizerHistory, setOrganizerHistory] = useState([]);
+  const [organizerHistoryVisible, setOrganizerHistoryVisible] = useState(10);
 
   const [participantRoom, setParticipantRoom] = useState("");
   const [participantSocket, setParticipantSocket] = useState(null);
@@ -45,8 +48,31 @@ export default function App() {
   const [now, setNow] = useState(Date.now());
   const [answerStatus, setAnswerStatus] = useState("");
   const [showResults, setShowResults] = useState(false);
+  const [participantHistory, setParticipantHistory] = useState([]);
+  const [participantHistoryVisible, setParticipantHistoryVisible] = useState(10);
+  const [activeTab, setActiveTab] = useState("quiz");
 
   const isOrganizer = user?.role === "organizer";
+
+  const loadProfileHistory = () => {
+    if (!token || !user) return;
+    apiRequest("/profile/history", { method: "GET", ...withAuth(token) })
+      .then((data) => {
+        if (data.role === "participant") {
+          setParticipantHistory(data.history || []);
+          setParticipantHistoryVisible(10);
+          setOrganizerHistory([]);
+        } else {
+          setOrganizerHistory(data.sessions || []);
+          setOrganizerHistoryVisible(10);
+          setParticipantHistory([]);
+        }
+      })
+      .catch(() => {
+        setParticipantHistory([]);
+        setOrganizerHistory([]);
+      });
+  };
 
   useEffect(() => {
     if (!token) {
@@ -72,6 +98,10 @@ export default function App() {
         .catch(() => setQuizzes([]));
     }
   }, [token, isOrganizer]);
+
+  useEffect(() => {
+    loadProfileHistory();
+  }, [token, user]);
 
   useEffect(() => {
     return () => {
@@ -120,6 +150,9 @@ export default function App() {
     setOrganizerRoom(null);
     setOrganizerQuestion(null);
     setParticipants([]);
+    setOrganizerError("");
+    setOrganizerHistory([]);
+    setOrganizerHistoryVisible(10);
     setQuizDetails(null);
     setParticipantRoom("");
     setCurrentQuestion(null);
@@ -127,6 +160,9 @@ export default function App() {
     setParticipantStatus("idle");
     setAnswerStatus("");
     setShowResults(false);
+    setParticipantHistory([]);
+    setParticipantHistoryVisible(10);
+    setActiveTab("quiz");
     if (organizerSocket) organizerSocket.disconnect();
     if (participantSocket) participantSocket.disconnect();
   };
@@ -140,7 +176,14 @@ export default function App() {
   };
 
   const addQuestion = () => {
-    setQuizForm((prev) => ({ ...prev, questions: [...prev.questions, emptyQuestion()] }));
+    setOrganizerError("");
+    setQuizForm((prev) => {
+      if (prev.questions.length >= 20) {
+        setOrganizerError("В одном квизе может быть максимум 20 вопросов");
+        return prev;
+      }
+      return { ...prev, questions: [...prev.questions, emptyQuestion()] };
+    });
   };
 
   const removeQuestion = (index) => {
@@ -152,6 +195,23 @@ export default function App() {
 
   const handleCreateQuiz = async (event) => {
     event.preventDefault();
+    setOrganizerError("");
+    if (quizzes.length >= 5) {
+      setOrganizerError("Организатор может иметь максимум 5 квизов");
+      return;
+    }
+    const normalizedTitle = quizForm.title.trim().toLowerCase();
+    const hasDuplicateTitle = quizzes.some(
+      (quiz) => quiz.title.trim().toLowerCase() === normalizedTitle
+    );
+    if (hasDuplicateTitle) {
+      setOrganizerError("Квиз с таким названием уже существует");
+      return;
+    }
+    if (quizForm.questions.length > 20) {
+      setOrganizerError("В одном квизе может быть максимум 20 вопросов");
+      return;
+    }
     const categories = quizForm.categories
       .split(",")
       .map((item) => item.trim())
@@ -173,6 +233,12 @@ export default function App() {
         correctAnswers: q.correctAnswers.filter((answer) => q.options.includes(answer))
       }))
       .filter((q) => q.prompt && q.options.length);
+
+    const hasMissingCorrect = questions.some((q) => !q.correctAnswers.length);
+    if (hasMissingCorrect) {
+      setOrganizerError("В каждом вопросе должен быть хотя бы один правильный ответ");
+      return;
+    }
 
     await apiRequest("/quizzes", {
       method: "POST",
@@ -222,6 +288,7 @@ export default function App() {
       setQuizStatus("ended");
       setShowResults(true);
       setOrganizerQuestion(null);
+      loadProfileHistory();
     });
   };
 
@@ -231,10 +298,29 @@ export default function App() {
       ...withAuth(token)
     });
     setQuizDetails(data.quiz);
+    setOrganizerError("");
   };
 
   const handleCloseQuizDetails = () => {
     setQuizDetails(null);
+    setOrganizerError("");
+  };
+
+  const handleDeleteQuiz = async (quizId) => {
+    const confirmed = window.confirm("Удалить квиз без возможности восстановления?");
+    if (!confirmed) return;
+    try {
+      await apiRequest(`/quizzes/${quizId}`, {
+        method: "DELETE",
+        ...withAuth(token)
+      });
+      const data = await apiRequest("/quizzes", { method: "GET", ...withAuth(token) });
+      setQuizzes(data.quizzes);
+      setQuizDetails(null);
+      setOrganizerError("");
+    } catch (err) {
+      setOrganizerError(err.message || "Не удалось удалить квиз");
+    }
   };
 
   const organizerNextQuestion = () => {
@@ -297,6 +383,7 @@ export default function App() {
     socket.on("session_ended", () => {
       setQuizStatus("ended");
       setShowResults(true);
+      loadProfileHistory();
     });
   };
 
@@ -418,12 +505,89 @@ export default function App() {
           </form>
         </section>
       ) : (
-        <section className="grid">
-          {isOrganizer ? (
-            <>
+        <>
+          <div className="tabs">
+            <button
+              className={activeTab === "quiz" ? "active" : ""}
+              onClick={() => setActiveTab("quiz")}
+            >
+              Квиз
+            </button>
+            <button
+              className={activeTab === "profile" ? "active" : ""}
+              onClick={() => setActiveTab("profile")}
+            >
+              Личный кабинет
+            </button>
+          </div>
+          {activeTab === "profile" ? (
+            <section className="grid">
+              {isOrganizer ? (
+                <div className="card">
+                  <h2>История проведенных квизов</h2>
+                  {organizerHistory.length === 0 ? (
+                    <p className="muted">Пока нет истории.</p>
+                  ) : (
+                    <div className="leaderboard">
+                      {organizerHistory.slice(0, organizerHistoryVisible).map((item) => (
+                        <div key={item.session_id} className="leader-row">
+                          <div>
+                            <span>
+                              Название: {item.quiz_title} Победитель: {item.winner_email || "—"}
+                            </span>
+                          </div>
+                          <span>{item.started_at || "—"}</span>
+                        </div>
+                      ))}
+                      {organizerHistory.length > organizerHistoryVisible ? (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => setOrganizerHistoryVisible((prev) => prev + 10)}
+                        >
+                          Показать еще
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="card">
+                  <h2>История участия</h2>
+                  {participantHistory.length === 0 ? (
+                    <p className="muted">Пока нет истории.</p>
+                  ) : (
+                    <div className="leaderboard">
+                      {participantHistory.slice(0, participantHistoryVisible).map((item) => (
+                        <div key={`${item.session_id}-${item.quiz_title}`} className="leader-row">
+                          <div>
+                            <span>Название: {item.quiz_title} Место: {item.place || "—"}</span>
+                          </div>
+                          <span>{item.score} баллов</span>
+                        </div>
+                      ))}
+                      {participantHistory.length > participantHistoryVisible ? (
+                        <button
+                          type="button"
+                          className="ghost"
+                          onClick={() => setParticipantHistoryVisible((prev) => prev + 10)}
+                        >
+                          Показать еще
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          ) : (
+            <section className="grid">
+              {isOrganizer ? (
+                <>
               <div className="card">
                 <h2>Кабинет организатора</h2>
                 <form className="stack" onSubmit={handleCreateQuiz}>
+                  {organizerError ? <p className="error">{organizerError}</p> : null}
                   <label>
                     Название квиза
                     <input
@@ -588,10 +752,19 @@ export default function App() {
                   <div className="live-panel">
                     <div className="panel-header">
                       <h3>Квиз: {quizDetails.title}</h3>
-                      <button className="ghost" onClick={handleCloseQuizDetails}>
-                        Закрыть
-                      </button>
+                      <div className="row-actions">
+                        <button
+                          className="danger"
+                          onClick={() => handleDeleteQuiz(quizDetails.id)}
+                        >
+                          Удалить квиз
+                        </button>
+                        <button className="ghost" onClick={handleCloseQuizDetails}>
+                          Закрыть
+                        </button>
+                      </div>
                     </div>
+                    {organizerError ? <p className="error">{organizerError}</p> : null}
                     <p className="muted">Категории: {quizDetails.categories.join(", ")}</p>
                     <div className="question-list">
                       {quizDetails.questions.map((question) => (
@@ -668,6 +841,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
+
               </div>
             </>
           ) : (
@@ -767,9 +941,12 @@ export default function App() {
                   </div>
                 )}
               </div>
+
             </>
           )}
-        </section>
+            </section>
+          )}
+        </>
       )}
     </div>
   );

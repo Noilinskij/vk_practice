@@ -16,7 +16,7 @@ function generateRoomCode() {
 
 router.post("/quizzes/:id/start", authRequired, roleRequired("organizer"), (req, res) => {
   const quiz = db
-    .prepare("SELECT id FROM quizzes WHERE id = ? AND organizer_id = ?")
+    .prepare("SELECT id FROM quizzes WHERE id = ? AND organizer_id = ? AND deleted_at IS NULL")
     .get(req.params.id, req.user.id);
   if (!quiz) {
     return res.status(404).json({ error: "Квиз не найден" });

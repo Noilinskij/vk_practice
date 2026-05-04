@@ -74,6 +74,14 @@ function initDb() {
       FOREIGN KEY (user_id) REFERENCES users(id)
     );
   `);
+
+  try {
+    db.exec("ALTER TABLE quizzes ADD COLUMN deleted_at TEXT");
+  } catch (err) {
+    if (!String(err.message).includes("duplicate column name")) {
+      throw err;
+    }
+  }
 }
 
 module.exports = { db, initDb };
