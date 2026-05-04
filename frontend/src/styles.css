@@ -82,6 +82,11 @@ textarea {
   line-height: 1.5;
 }
 
+.hero-title {
+  font-size: 52px;
+  letter-spacing: 0.02em;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

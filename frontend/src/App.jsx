@@ -425,12 +425,7 @@ export default function App() {
       <div className="ambient" />
       <header className="hero">
         <div>
-          <p className="overline">QuizFlow</p>
-          <h1>Студия живых квизов</h1>
-          <p className="subtitle">
-            Создавай интерактивные квизы, запускай комнаты и смотри лидерборды в реальном
-            времени.
-          </p>
+          <h1 className="hero-title">QuizFlow</h1>
         </div>
         {user ? (
           <div className="chip">
